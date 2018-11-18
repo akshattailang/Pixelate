@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Pixelate</string>
+    <string name="menu_camera_label">Camera</string>
+    <string name="camera">Camera</string>
+    <string name="gallery">Gallery</string>
+    <string name="image_taken_from_camera">image taken from camera</string>
+    <string name="add_images_for_free">Add your pictures</string>
+    <string name="image_to_add_pictures">image to add pictures</string>
+    <string name="crop_image_menu_rotate_left">Rotate counter clockwise</string>
+    <string name="crop_image_menu_rotate_right">Rotate</string>
+    <string name="crop_image_menu_crop">Crop</string>
+    <string name="crop_image_menu_flip">Flip</string>
+    <string name="crop_image_menu_flip_horizontally">Flip horizontally</string>
+    <string name="crop_image_menu_flip_vertically">Flip vertically</string>
+</resources>
