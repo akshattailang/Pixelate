@@ -26,6 +26,9 @@ import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.amazonaws.mobile.client.AWSMobileClient;
+import com.amazonaws.mobile.client.AWSStartupHandler;
+import com.amazonaws.mobile.client.AWSStartupResult;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import java.io.File;
@@ -81,6 +84,8 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
 
     private Uri mCropImageUri;
 
+    private String mCurrentPhotoPath;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         setTheme(R.style.AppTheme);// Make sure this is before calling super.onCreate
@@ -89,7 +94,16 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
 
         inflateViews();
         setListeners();
+        initializeAWS();
     }
+
+    private void initializeAWS() {
+        AWSMobileClient.getInstance().initialize(this, new AWSStartupHandler() {
+            @Override
+            public void onComplete(AWSStartupResult awsStartupResult) {
+                Log.d("MainActivity", "AWSMobileClient is instantiated and you are connected to AWS!");
+            }
+        }).execute();    }
 
     private void inflateViews() {
         this.addImageLinearLayout = findViewById(R.id.add_ll);
@@ -207,8 +221,9 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
         Log.e("MainActivity", "requestCode " + requestCode);
         Log.e("MainActivity", "resultCode " + resultCode);
         Log.e("MainActivity", "data " + data);
-        if (requestCode == CAMERA_REQUEST && resultCode == Activity.RESULT_OK && data != null) {
-            mCropImageUri = data.getData();
+        if (requestCode == CAMERA_REQUEST && resultCode == Activity.RESULT_OK) {
+            File f = new File(mCurrentPhotoPath);
+            mCropImageUri = Uri.fromFile(f);
             // For API >= 23 we need to check specifically that we have permissions to read external storage.
             if (isReadExternalStoragePermissionsRequired(this, mCropImageUri)) {
                 Log.e("MainActivity", "isReadExternalStoragePermissionsRequired");
@@ -224,6 +239,7 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
         } else if (requestCode == MY_IMAGE_PICK_CODE && resultCode == Activity.RESULT_OK && data != null) {
             Uri uri = data.getData();
             startCropActivity(uri);
+
         } else if (requestCode == CROP_IMAGE_ACTIVITY_REQUEST_CODE) {
             ActivityResult result = getActivityResult(data);
             if (resultCode == RESULT_OK) {
@@ -236,6 +252,22 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
                 }
             }
         }
+    }
+
+    private File createImageFile() throws IOException {
+        // Create an image file name
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String imageFileName = "JPEG_" + timeStamp + "_";
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File image = File.createTempFile(
+                imageFileName,  /* prefix */
+                ".jpg",         /* suffix */
+                storageDir      /* directory */
+        );
+
+        // Save a file: path for use with ACTION_VIEW intents
+        mCurrentPhotoPath = image.getAbsolutePath();
+        return image;
     }
 
     public static boolean isReadExternalStoragePermissionsRequired(
@@ -258,24 +290,6 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
             return true;
         }
     }
-
-    /*public Uri getPickImageResultUri(@Nullable Intent data) {
-        boolean isCamera = true;
-        if (data != null && data.getData() != null) {
-            String action = data.getAction();
-            isCamera = action != null && action.equals(MediaStore.ACTION_IMAGE_CAPTURE);
-        }
-        return isCamera || data.getData() == null ? getCaptureImageOutputUri() : data.getData();
-    }
-
-    public Uri getCaptureImageOutputUri() {
-        Uri outputFileUri = null;
-        File getImage = getExternalCacheDir();
-        if (getImage != null) {
-            outputFileUri = Uri.fromFile(new File(getImage.getPath(), "pickImageResult.jpeg"));
-        }
-        return outputFileUri;
-    }*/
 
     public static ActivityResult getActivityResult(@Nullable Intent data) {
         return data != null ? (ActivityResult) data.getParcelableExtra(CROP_IMAGE_EXTRA_RESULT) : null;
@@ -864,19 +878,5 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
         }
     }
 
-    private File createImageFile() throws IOException {
-        // Create an image file name
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        String imageFileName = "JPEG_" + timeStamp + "_";
-        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-        File image = File.createTempFile(
-                imageFileName,  /* prefix */
-                ".jpg",         /* suffix */
-                storageDir      /* directory */
-        );
 
-        // Save a file: path for use with ACTION_VIEW intents
-        String mCurrentPhotoPath = image.getAbsolutePath();
-        return image;
-    }
 }
