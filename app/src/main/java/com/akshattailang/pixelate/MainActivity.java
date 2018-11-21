@@ -3,9 +3,11 @@ package com.akshattailang.pixelate;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.net.Uri;
@@ -14,13 +16,13 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
@@ -29,11 +31,16 @@ import android.widget.Toast;
 import com.amazonaws.mobile.client.AWSMobileClient;
 import com.amazonaws.mobile.client.AWSStartupHandler;
 import com.amazonaws.mobile.client.AWSStartupResult;
+import com.amazonaws.mobileconnectors.s3.transferutility.TransferListener;
+import com.amazonaws.mobileconnectors.s3.transferutility.TransferObserver;
+import com.amazonaws.mobileconnectors.s3.transferutility.TransferState;
+import com.amazonaws.mobileconnectors.s3.transferutility.TransferUtility;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -86,6 +93,12 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
 
     private String mCurrentPhotoPath;
 
+    // The TransferUtility is the primary class for managing transfer to S3
+    static TransferUtility transferUtility;
+
+    // Reference to the utility class
+    static Util util;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         setTheme(R.style.AppTheme);// Make sure this is before calling super.onCreate
@@ -103,7 +116,12 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
             public void onComplete(AWSStartupResult awsStartupResult) {
                 Log.d("MainActivity", "AWSMobileClient is instantiated and you are connected to AWS!");
             }
-        }).execute();    }
+        }).execute();
+
+        // Initializes TransferUtility, always do this before using it.
+        util = new Util();
+        transferUtility = util.getTransferUtility(this);
+    }
 
     private void inflateViews() {
         this.addImageLinearLayout = findViewById(R.id.add_ll);
@@ -244,7 +262,18 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
             ActivityResult result = getActivityResult(data);
             if (resultCode == RESULT_OK) {
                 if (result != null) {
-                    ((ImageView) findViewById(R.id.test_iv)).setImageURI(result.getUri());
+                    //TODO upload image in background and set to a recycler view
+//                    ((ImageView) findViewById(R.id.test_iv)).setImageURI(result.getUri());
+
+                    try {
+                        String path = getPath(result.getUri());
+                        beginUpload(path);
+                    } catch (URISyntaxException e) {
+                        Toast.makeText(this,
+                                "Unable to get the file from the given URI. See error log for details",
+                                Toast.LENGTH_LONG).show();
+                        Log.e("MainActivity", "Unable to upload file from the given uri", e);
+                    }
                 }
             } else if (resultCode == CROP_IMAGE_ACTIVITY_RESULT_ERROR_CODE) {
                 if (result != null) {
@@ -252,6 +281,120 @@ public class MainActivity extends AppCompatActivity implements PopupMenu.OnMenuI
                 }
             }
         }
+    }
+
+    /*
+     * Begins to upload the file specified by the file path.
+     */
+    private void beginUpload(String filePath) {
+        if (filePath == null) {
+            Toast.makeText(this, "Could not find the filepath of the selected file",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        File file = new File(filePath);
+        final TransferObserver observer = transferUtility.upload(Constants.BUCKET_NAME,
+                file.getName(),
+                file);
+
+        observer.setTransferListener(new TransferListener() {
+            @Override
+            public void onStateChanged(int id, TransferState state) {
+                if (state == TransferState.COMPLETED) {
+                    String url = "https://" + Constants.BUCKET_NAME + ".s3.amazonaws.com/" + observer.getKey();
+                    Log.e("MainActivity :,","Completed " + url);//we just need to share this File url with Api service request.
+                }
+            }
+
+            @Override
+            public void onProgressChanged(int id, long bytesCurrent, long bytesTotal) {
+
+            }
+
+            @Override
+            public void onError(int id, Exception ex) {
+                Log.e("MainActivity :,", "failed to upload " + ex);
+            }
+        });
+    }
+
+    /*
+     * Gets the file path of the given Uri.
+     */
+    private String getPath(Uri uri) throws URISyntaxException {
+        String selection = null;
+        String[] selectionArgs = null;
+        // Uri is different in versions after KITKAT (Android 4.4), we need to
+        // deal with different Uris.
+        if (DocumentsContract.isDocumentUri(getApplicationContext(), uri)) {
+            if (isExternalStorageDocument(uri)) {
+                final String docId = DocumentsContract.getDocumentId(uri);
+                final String[] split = docId.split(":");
+                return Environment.getExternalStorageDirectory() + "/" + split[1];
+            } else if (isDownloadsDocument(uri)) {
+                final String id = DocumentsContract.getDocumentId(uri);
+                uri = ContentUris.withAppendedId(
+                        Uri.parse("content://downloads/public_downloads"), Long.valueOf(id));
+            } else if (isMediaDocument(uri)) {
+                final String docId = DocumentsContract.getDocumentId(uri);
+                final String[] split = docId.split(":");
+                final String type = split[0];
+                if ("image".equals(type)) {
+                    uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                } else if ("video".equals(type)) {
+                    uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                } else if ("audio".equals(type)) {
+                    uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+                }
+                selection = "_id=?";
+                selectionArgs = new String[]{
+                        split[1]
+                };
+            }
+        }
+        if ("content".equalsIgnoreCase(uri.getScheme())) {
+            String[] projection = {
+                    MediaStore.Images.Media.DATA
+            };
+            Cursor cursor = null;
+            try {
+                cursor = getContentResolver()
+                        .query(uri, projection, selection, selectionArgs, null);
+                int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                if (cursor.moveToFirst()) {
+                    return cursor.getString(column_index);
+                }
+            } catch (Exception e) {
+            }
+        } else if ("file".equalsIgnoreCase(uri.getScheme())) {
+            return uri.getPath();
+        }
+        return null;
+    }
+
+    /**
+     * @param uri The Uri to check.
+     * @return Whether the Uri authority is ExternalStorageProvider.
+     */
+    public static boolean isExternalStorageDocument(Uri uri) {
+        return "com.android.externalstorage.documents".equals(uri.getAuthority());
+    }
+
+    /**
+     * @param uri The Uri to check.
+     * @return Whether the Uri authority is DownloadsProvider.
+     */
+    public static boolean isDownloadsDocument(Uri uri) {
+        return "com.android.providers.downloads.documents".equals(uri.getAuthority());
+    }
+
+    /**
+     * @param uri The Uri to check.
+     * @return Whether the Uri authority is MediaProvider.
+     */
+    public static boolean isMediaDocument(Uri uri) {
+        return "com.android.providers.media.documents".equals(uri.getAuthority());
     }
 
     private File createImageFile() throws IOException {
